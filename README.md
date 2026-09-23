@@ -30,4 +30,4 @@ Pessoas que utilizam medicamentos regularmente, com atenção especial aos usuá
 
 ## Equipe
 
-Projeto acadêmico desenvolvido pela equipe da disciplina.
+Projeto acadêmico desenvolvido pela equipe acadêmica.
