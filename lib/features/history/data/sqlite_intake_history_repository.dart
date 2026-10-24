@@ -12,6 +12,20 @@ class SqliteIntakeHistoryRepository implements IntakeHistoryRepository {
   final Database _database;
 
   @override
+  Future<MedicationIntake?> getById(String id) async {
+    final rows = await _database.query(
+      'medication_intakes',
+      where: 'id = ?',
+      whereArgs: [id],
+      limit: 1,
+    );
+    if (rows.isEmpty) {
+      return null;
+    }
+    return _mapIntake(rows.single);
+  }
+
+  @override
   Future<List<MedicationIntake>> getBetween({
     required DateTime startInclusive,
     required DateTime endExclusive,
