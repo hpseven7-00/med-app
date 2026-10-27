@@ -62,6 +62,7 @@ class _FakeMedicationRepository implements MedicationRepository {
 }
 
 class _FakeHistoryRepository implements IntakeHistoryRepository {
+
   @override
   Future<MedicationIntake?> getById(String id) async => null;
 
@@ -73,6 +74,10 @@ class _FakeHistoryRepository implements IntakeHistoryRepository {
 }
 
 class _FakeMedicationService implements MedicationService {
+
+  @override
+  Future<void> synchronizeIntakes() async {}
+
   @override
   IntakeHistoryRepository get historyRepository => _FakeHistoryRepository();
 
