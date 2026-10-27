@@ -1,140 +1,169 @@
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'medication_notification_service.dart';
 
 class NotificationPermissionGate extends StatefulWidget {
-  const NotificationPermissionGate({
-    required this.service,
-    required this.onReminderAction,
-    required this.child,
-    super.key,
-  });
-
+  final Widget child;
   final MedicationNotificationService service;
   final Future<void> Function(ReminderAction action) onReminderAction;
-  final Widget child;
+
+  const NotificationPermissionGate({
+    super.key,
+    required this.child,
+    required this.service,
+    required this.onReminderAction,
+  });
 
   @override
   State<NotificationPermissionGate> createState() =>
       _NotificationPermissionGateState();
 }
 
-class _NotificationPermissionGateState extends State<NotificationPermissionGate>
-    with WidgetsBindingObserver {
-  NotificationPermissionStatus? _permissionStatus;
+class _NotificationPermissionGateState
+    extends State<NotificationPermissionGate> {
+  NotificationPermissionStatus _permissionStatus =
+      NotificationPermissionStatus.notDetermined;
+
   bool _canScheduleExactReminders = false;
   bool _isLoading = true;
-  String? _error;
+  Object? _error;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
+
+    // No Chrome, permite testar a interface sem notificações nativas.
+    if (kIsWeb) {
+      _isLoading = false;
+      return;
+    }
+
     _initialize();
   }
 
-  @override
-  void didUpdateWidget(covariant NotificationPermissionGate oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.service != widget.service) {
-      _initialize();
-    }
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
-      _initialize();
-    }
-  }
-
-  @override
-  void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    super.dispose();
-  }
-
   Future<void> _initialize() async {
+    if (kIsWeb) return;
+
     setState(() {
       _isLoading = true;
       _error = null;
     });
+
     try {
-      await widget.service.initialize(onAction: widget.onReminderAction);
+      await widget.service.initialize(
+        onAction: widget.onReminderAction,
+      );
+
       await _refreshPermissions();
     } catch (error) {
-      _showError(error);
+      if (!mounted) return;
+
+      setState(() {
+        _error = error;
+        _isLoading = false;
+      });
     }
   }
 
   Future<void> _refreshPermissions() async {
     try {
-      final permissionStatus = await widget.service.getPermissionStatus();
-      final canScheduleExactReminders =
-          permissionStatus == NotificationPermissionStatus.granted &&
+      final status = await widget.service.getPermissionStatus();
+      final canSchedule =
           await widget.service.canScheduleExactReminders();
-      if (!mounted) {
-        return;
-      }
+
+      if (!mounted) return;
+
       setState(() {
-        _permissionStatus = permissionStatus;
-        _canScheduleExactReminders = canScheduleExactReminders;
+        _permissionStatus = status;
+        _canScheduleExactReminders = canSchedule;
         _isLoading = false;
         _error = null;
       });
     } catch (error) {
-      _showError(error);
+      if (!mounted) return;
+
+      setState(() {
+        _error = error;
+        _isLoading = false;
+      });
     }
   }
 
   Future<void> _requestNotifications() async {
-    await _performPermissionAction(() async {
-      await widget.service.requestPermission();
-    });
-  }
+    try {
+      setState(() {
+        _isLoading = true;
+        _error = null;
+      });
 
-  Future<void> _openNotificationSettings() async {
-    await _performPermissionAction(() async {
-      final opened = await widget.service.openNotificationSettings();
-      if (!opened) {
-        throw StateError(
-          'Não foi possível abrir as configurações de notificações.',
-        );
-      }
-    });
+      final status = await widget.service.requestPermission();
+
+      if (!mounted) return;
+
+      setState(() {
+        _permissionStatus = status;
+      });
+
+      await _refreshPermissions();
+    } catch (error) {
+      if (!mounted) return;
+
+      setState(() {
+        _error = error;
+        _isLoading = false;
+      });
+    }
   }
 
   Future<void> _requestExactReminders() async {
-    await _performPermissionAction(() async {
-      await widget.service.requestExactReminderPermission();
-    });
-  }
-
-  Future<void> _performPermissionAction(Future<void> Function() action) async {
-    setState(() {
-      _isLoading = true;
-      _error = null;
-    });
     try {
-      await action();
+      setState(() {
+        _isLoading = true;
+        _error = null;
+      });
+
+      await widget.service.requestExactReminderPermission();
       await _refreshPermissions();
     } catch (error) {
-      _showError(error);
+      if (!mounted) return;
+
+      setState(() {
+        _error = error;
+        _isLoading = false;
+      });
     }
   }
 
-  void _showError(Object error) {
-    if (!mounted) {
-      return;
+  Future<void> _openNotificationSettings() async {
+    try {
+      final opened =
+          await widget.service.openNotificationSettings();
+
+      if (!opened) {
+        await _refreshPermissions();
+        return;
+      }
+
+      await _refreshPermissions();
+    } catch (error) {
+      if (!mounted) return;
+
+      setState(() {
+        _error = error;
+        _isLoading = false;
+      });
     }
-    setState(() {
-      _isLoading = false;
-      _error = error.toString();
-    });
   }
 
   @override
   Widget build(BuildContext context) {
+    // A implementação atual de notificações nativas não funciona na Web.
+    if (kIsWeb) {
+      return widget.child;
+    }
+
     if (_permissionStatus == NotificationPermissionStatus.granted &&
         _canScheduleExactReminders &&
         !_isLoading &&
@@ -143,7 +172,9 @@ class _NotificationPermissionGateState extends State<NotificationPermissionGate>
     }
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Med+')),
+      appBar: AppBar(
+        title: const Text('Med+'),
+      ),
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
@@ -166,13 +197,14 @@ class _NotificationPermissionGateState extends State<NotificationPermissionGate>
                   ),
                   const SizedBox(height: 16),
                   Text(
-                    _permissionStatus == NotificationPermissionStatus.granted
+                    _permissionStatus ==
+                            NotificationPermissionStatus.granted
                         ? 'O Med+ precisa de autorização para programar '
-                              'lembretes em horários exatos. Permita esse acesso '
-                              'nas configurações para continuar.'
+                            'lembretes em horários exatos. Permita esse acesso '
+                            'nas configurações para continuar.'
                         : 'As notificações são necessárias para avisar você '
-                              'nos horários dos medicamentos. O Med+ não poderá '
-                              'ser usado enquanto elas não estiverem ativadas.',
+                            'nos horários dos medicamentos. O Med+ não poderá '
+                            'ser usado enquanto elas não estiverem ativadas.',
                     style: Theme.of(context).textTheme.bodyLarge,
                     textAlign: TextAlign.center,
                   ),
@@ -196,22 +228,19 @@ class _NotificationPermissionGateState extends State<NotificationPermissionGate>
                         onPressed: _initialize,
                         child: const Text('Tentar novamente'),
                       )
-                    else if (_permissionStatus !=
-                        NotificationPermissionStatus.granted)
+                    else if (_permissionStatus ==
+                        NotificationPermissionStatus.notDetermined)
                       FilledButton(
-                        onPressed:
-                            _permissionStatus ==
-                                NotificationPermissionStatus.denied
-                            ? _openNotificationSettings
-                            : _requestNotifications,
-                        child: Text(
-                          _permissionStatus ==
-                                  NotificationPermissionStatus.denied
-                              ? 'Abrir configurações'
-                              : 'Ativar notificações',
-                        ),
+                        onPressed: _requestNotifications,
+                        child: const Text('Ativar notificações'),
                       )
-                    else
+                    else if (_permissionStatus ==
+                        NotificationPermissionStatus.denied)
+                      FilledButton(
+                        onPressed: _openNotificationSettings,
+                        child: const Text('Abrir configurações'),
+                      )
+                    else if (!_canScheduleExactReminders)
                       FilledButton(
                         onPressed: _requestExactReminders,
                         child: const Text('Permitir horários exatos'),
