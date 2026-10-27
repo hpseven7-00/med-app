@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
+import 'package:sqflite/sqflite.dart';
+import 'package:sqflite_common_ffi_web/sqflite_ffi_web.dart';
 
 import 'app/app_shell.dart';
 import 'app/med_mais_theme.dart';
@@ -12,18 +15,29 @@ import 'features/medications/application/medication_service.dart';
 import 'features/medications/data/sqlite_medication_repository.dart';
 import 'features/medications/domain/medication_intake.dart';
 
-void main() async {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // Inicializa a fábrica do SQLite para execução no navegador.
+  // No Android e iOS, o sqflite utiliza sua implementação nativa.
+  if (kIsWeb) {
+    databaseFactory = databaseFactoryFfiWeb;
+  }
+
   final database = await MedMaisDatabase.open();
+
   final medicationRepository = SqliteMedicationRepository(database);
   final historyRepository = SqliteIntakeHistoryRepository(database);
-  final notificationService = FlutterLocalMedicationNotificationService();
+  final notificationService =
+      FlutterLocalMedicationNotificationService();
+
   final medicationService = MedicationService(
     medicationRepository: medicationRepository,
     historyRepository: historyRepository,
     notificationService: notificationService,
   );
+
+  await medicationService.synchronizeIntakes();
 
   runApp(
     Dependencies(
@@ -49,30 +63,45 @@ class MedMaisApp extends StatelessWidget {
       home: NotificationPermissionGate(
         service: deps.notificationService,
         onReminderAction: (action) async {
-          final intake = await deps.historyRepository.getById(action.intakeId);
-          if (intake == null || intake.status != IntakeStatus.pending) {
+          final intake = await deps.historyRepository.getById(
+            action.intakeId,
+          );
+
+          if (intake == null ||
+              intake.status != IntakeStatus.pending) {
             return;
           }
 
-          final medication = await deps.medicationRepository.getById(intake.medicationId);
+          final medication = await deps.medicationRepository.getById(
+            intake.medicationId,
+          );
+
           if (medication == null) {
             return;
           }
 
           final now = DateTime.now();
+
           switch (action.type) {
             case ReminderActionType.taken:
-              await deps.historyRepository.save(intake.recordTaken(at: now));
+              await deps.historyRepository.save(
+                intake.recordTaken(at: now),
+              );
               break;
+
             case ReminderActionType.notTaken:
-              await deps.historyRepository.save(intake.recordNotTaken(at: now));
+              await deps.historyRepository.save(
+                intake.recordNotTaken(at: now),
+              );
               break;
+
             case ReminderActionType.snooze15Minutes:
               final snoozed = SnoozedReminder.after15Minutes(
-                id: DateTime.now().millisecondsSinceEpoch.toString(), // Simplified ID for snooze
+                id: DateTime.now().millisecondsSinceEpoch.toString(),
                 intake: intake,
                 createdAt: now,
               );
+
               await deps.notificationService.scheduleSnoozedReminder(
                 medication: medication,
                 intake: intake,
