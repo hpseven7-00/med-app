@@ -1,8 +1,13 @@
-int dateTimeToSqlite(DateTime value) => value.microsecondsSinceEpoch;
+int dateTimeToSqlite(DateTime value) {
+  return value.microsecondsSinceEpoch;
+}
 
 DateTime dateTimeFromSqlite(Object value) {
-  if (value is! int) {
-    throw FormatException('Expected a SQLite timestamp in microseconds.');
+  if (value is int) {
+    return DateTime.fromMicrosecondsSinceEpoch(value);
   }
-  return DateTime.fromMicrosecondsSinceEpoch(value, isUtc: true);
+
+  throw FormatException(
+    'Expected a SQLite timestamp in microseconds.',
+  );
 }
