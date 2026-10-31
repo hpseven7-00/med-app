@@ -1,3 +1,4 @@
+
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
@@ -12,7 +13,12 @@ enum _MedicationFilter {
 }
 
 class MedicationsPage extends StatefulWidget {
-  const MedicationsPage({super.key});
+  const MedicationsPage({
+    super.key,
+    required this.onMedicationAdded,
+  });
+
+  final VoidCallback onMedicationAdded;
 
   @override
   State<MedicationsPage> createState() => _MedicationsPageState();
@@ -33,7 +39,12 @@ class _MedicationsPageState extends State<MedicationsPage> {
   @override
   void initState() {
     super.initState();
-    _loadMedications();
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _loadMedications();
+      }
+    });
   }
 
   Future<void> _loadMedications() async {
@@ -124,8 +135,6 @@ class _MedicationsPageState extends State<MedicationsPage> {
         return _medications;
 
       case _MedicationFilter.inUse:
-        // Considera em uso os medicamentos que possuem horários
-        // e dias da semana configurados.
         return _medications
             .where(
               (medication) => medication.schedules.any(
@@ -176,10 +185,12 @@ class _MedicationsPageState extends State<MedicationsPage> {
 
     if (result == true) {
       await _loadMedications();
+
+      widget.onMedicationAdded();
     }
   }
 
- Widget _buildFilter(
+  Widget _buildFilter(
     String label,
     _MedicationFilter filter,
   ) {
@@ -189,7 +200,6 @@ class _MedicationsPageState extends State<MedicationsPage> {
       label: Text(label),
       selected: selected,
       showCheckmark: false,
-
       labelStyle: TextStyle(
         fontSize: 20,
         fontWeight: FontWeight.w500,
@@ -197,18 +207,14 @@ class _MedicationsPageState extends State<MedicationsPage> {
             ? Colors.white
             : const Color(0xFF183744),
       ),
-
       padding: const EdgeInsets.symmetric(
         horizontal: 18,
         vertical: 12,
       ),
-
       selectedColor: const Color(0xFF105968),
       backgroundColor: const Color(0xFFE1EBED),
-
       shape: const StadiumBorder(),
       side: BorderSide.none,
-
       onSelected: (_) {
         setState(() {
           _selectedFilter = filter;
@@ -373,7 +379,6 @@ class _MedicationsPageState extends State<MedicationsPage> {
         ),
         child: Stack(
           children: [
-            // Elementos abstratos suaves no fundo.
             Positioned(
               top: 35,
               right: -75,
@@ -412,8 +417,6 @@ class _MedicationsPageState extends State<MedicationsPage> {
                 ),
               ),
             ),
-
-            // Conteúdo sobre o gradiente.
             RefreshIndicator(
               onRefresh: _loadMedications,
               child: ListView(
