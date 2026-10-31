@@ -1,82 +1,90 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
-
 import '../../../core/dependencies/dependencies.dart';
 import '../../medications/domain/medication.dart';
 import '../../medications/domain/medication_intake.dart';
+import 'package:flutter/foundation.dart';
 
 class TodayPage extends StatefulWidget {
-  const TodayPage({super.key});
+  const TodayPage({
+    super.key,
+    required this.refreshSignal,
+  });
+
+  final ValueListenable<int> refreshSignal;
 
   @override
   State<TodayPage> createState() => _TodayPageState();
 }
 
 class _TodayPageState extends State<TodayPage> {
-  List<_IntakeDisplayItem>? _items;
+  List<_IntakeDisplayItem> _items = [];
   bool _isLoading = true;
 
-  static const _weekdays = [
-    'Seg.',
-    'Ter.',
-    'Qua.',
-    'Qui.',
-    'Sex.',
-    'Sáb.',
-    'Dom.',
-  ];
+  Timer? _clockTimer;
+  DateTime? _loadedDay;
 
-  static const _months = [
-    'janeiro',
-    'fevereiro',
-    'março',
-    'abril',
-    'maio',
-    'junho',
-    'julho',
-    'agosto',
-    'setembro',
-    'outubro',
-    'novembro',
-    'dezembro',
-  ];
-
-  static const _medicationColors = [
-    Color(0xFF16804A),
-    Color(0xFF1678A8),
-    Color(0xFFC62836),
-    Color(0xFFE58A19),
-  ];
+  static const Color _background = Color(0xFFF0F9F7);
+  static const Color _primary = Color(0xFF008B8B);
+  static const Color _text = Color(0xFF102D3A);
+  static const Color _secondaryText = Color(0xFF354957);
+  static const Color _lateBackground = Color(0xFFFFE5E5);
+  static const Color _lateColor = Color(0xFFD32F2F);
 
   @override
   void initState() {
     super.initState();
-    _loadTodayIntakes();
+
+    widget.refreshSignal.addListener(_onRefreshSignalChanged);
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _loadTodayIntakes();
+      }
+    });
   }
 
-  String _formatDate(DateTime date) {
-    final weekday = _weekdays[date.weekday - 1];
-    final month = _months[date.month - 1];
+  void _onRefreshSignalChanged() {
+    if (mounted) {
+      _loadTodayIntakes();
+    }
+  }
 
-    return '$weekday ${date.day} de $month';
+  @override
+  void dispose() {
+    widget.refreshSignal.removeListener(_onRefreshSignalChanged);
+    _clockTimer?.cancel();
+    super.dispose();
   }
 
   String _formatTime(DateTime date) {
-    final hour = date.hour.toString().padLeft(2, '0');
-    final minute = date.minute.toString().padLeft(2, '0');
+    final localDate = date.toLocal();
 
-    return '$hour:$minute';
+    return '${localDate.hour.toString().padLeft(2, '0')}:'
+        '${localDate.minute.toString().padLeft(2, '0')}';
+  }
+
+  String _formatAmount(Medication medication) {
+    final amount = medication.dose.amount;
+
+    final formattedAmount = amount == amount.roundToDouble()
+        ? amount.toInt().toString()
+        : amount.toString();
+
+    return '$formattedAmount ${medication.dose.unit.symbol}';
   }
 
   Future<void> _loadTodayIntakes() async {
-    if (mounted) {
-      setState(() {
-        _isLoading = true;
-      });
-    }
+    if (!mounted || (_isLoading && _loadedDay != null)) return;
+
+    setState(() {
+      _isLoading = true;
+    });
 
     try {
       final deps = Dependencies.of(context);
       final now = DateTime.now();
+
       final startOfDay = DateTime(now.year, now.month, now.day);
       final endOfDay = startOfDay.add(const Duration(days: 1));
 
@@ -88,10 +96,12 @@ class _TodayPageState extends State<TodayPage> {
       final displayItems = <_IntakeDisplayItem>[];
 
       for (final intake in intakes) {
+        if (intake.status != IntakeStatus.pending) continue;
+
         final medication = await deps.medicationRepository
             .getById(intake.medicationId);
 
-        if (medication != null) {
+        if (medication != null && medication.isActive) {
           displayItems.add(
             _IntakeDisplayItem(
               intake: intake,
@@ -102,7 +112,9 @@ class _TodayPageState extends State<TodayPage> {
       }
 
       displayItems.sort(
-        (a, b) => a.intake.scheduledAt.compareTo(b.intake.scheduledAt),
+        (a, b) => a.intake.scheduledAt.compareTo(
+          b.intake.scheduledAt,
+        ),
       );
 
       if (!mounted) return;
@@ -110,6 +122,7 @@ class _TodayPageState extends State<TodayPage> {
       setState(() {
         _items = displayItems;
         _isLoading = false;
+        _loadedDay = startOfDay;
       });
     } catch (e) {
       if (!mounted) return;
@@ -126,19 +139,13 @@ class _TodayPageState extends State<TodayPage> {
     }
   }
 
-  Future<void> _recordStatus(
-    MedicationIntake intake,
-    bool taken,
-  ) async {
+  Future<void> _recordTaken(MedicationIntake intake) async {
     try {
       final deps = Dependencies.of(context);
-      final now = DateTime.now();
 
-      final updatedIntake = taken
-          ? intake.recordTaken(at: now)
-          : intake.recordNotTaken(at: now);
-
-      await deps.historyRepository.save(updatedIntake);
+      await deps.historyRepository.save(
+        intake.recordTaken(at: DateTime.now()),
+      );
 
       await _loadTodayIntakes();
     } catch (e) {
@@ -146,238 +153,300 @@ class _TodayPageState extends State<TodayPage> {
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Não foi possível atualizar a dose: $e'),
+          content: Text('Não foi possível confirmar a dose: $e'),
         ),
       );
     }
   }
 
-  Color _statusColor(MedicationIntake intake) {
-    switch (intake.status) {
-      case IntakeStatus.pending:
-        return const Color(0xFFB3261E);
-      case IntakeStatus.taken:
-        return const Color(0xFF176B43);
-      case IntakeStatus.notTaken:
-        return const Color(0xFFB3261E);
-    }
+  Widget _buildHeader() {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        const Text(
+          'Olá!',
+          style: TextStyle(
+            fontSize: 30,
+            fontWeight: FontWeight.w700,
+            color: _text,
+          ),
+        ),
+        Stack(
+          clipBehavior: Clip.none,
+          children: [
+            const Icon(
+              Icons.notifications_none,
+              color: _primary,
+              size: 34,
+            ),
+            Positioned(
+              right: -2,
+              top: -3,
+              child: Container(
+                width: 11,
+                height: 11,
+                decoration: const BoxDecoration(
+                  color: Color(0xFFE53935),
+                  shape: BoxShape.circle,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
   }
 
-  String _statusLabel(MedicationIntake intake) {
-    switch (intake.status) {
-      case IntakeStatus.pending:
-        return 'Pendente';
-      case IntakeStatus.taken:
-        return 'Confirmado';
-      case IntakeStatus.notTaken:
-        return 'Não tomado';
-    }
+  Widget _buildNextMedication(_IntakeDisplayItem item) {
+    final medication = item.medication;
+    final intake = item.intake;
+
+    final isLate = intake.scheduledAt.isBefore(DateTime.now());
+
+    final cardColor = isLate
+        ? _lateBackground
+        : Colors.white;
+
+    final buttonColor = isLate
+        ? _lateColor
+        : _primary;
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: cardColor,
+        borderRadius: BorderRadius.circular(22),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF183744).withValues(alpha: 0.07),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Próximo medicamento',
+            style: TextStyle(
+              fontSize: 19,
+              fontWeight: FontWeight.w600,
+              color: _text,
+            ),
+          ),
+          const SizedBox(height: 14),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              color: cardColor,
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(
+                color: isLate
+                    ? const Color(0xFFFFBDBD)
+                    : const Color(0xFFE5ECEE),
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (isLate) ...[
+                  const Text(
+                    'Medicamento Atrasado',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                      color: _lateColor,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                ],
+                Text(
+                  _formatTime(intake.scheduledAt),
+                  style: const TextStyle(
+                    fontSize: 38,
+                    fontWeight: FontWeight.w700,
+                    color: _text,
+                  ),
+                ),
+                const SizedBox(height: 5),
+                Text(
+                  medication.name,
+                  style: const TextStyle(
+                    fontSize: 19,
+                    fontWeight: FontWeight.w600,
+                    color: _text,
+                  ),
+                ),
+                const SizedBox(height: 5),
+                Text(
+                  _formatAmount(medication),
+                  style: const TextStyle(
+                    fontSize: 17,
+                    color: _secondaryText,
+                  ),
+                ),
+                const SizedBox(height: 18),
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: ElevatedButton(
+                    onPressed: () => _recordTaken(intake),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: buttonColor,
+                      foregroundColor: Colors.white,
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                    child: const Text(
+                      'TOMAR AGORA',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
-  IconData _statusIcon(MedicationIntake intake) {
-    switch (intake.status) {
-      case IntakeStatus.pending:
-        return Icons.schedule_outlined;
-      case IntakeStatus.taken:
-        return Icons.check_circle_outline;
-      case IntakeStatus.notTaken:
-        return Icons.cancel_outlined;
-    }
+  Widget _buildUpcomingItem(_IntakeDisplayItem item) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.symmetric(
+        horizontal: 16,
+        vertical: 17,
+      ),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF183744).withValues(alpha: 0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          SizedBox(
+            width: 88,
+            child: Text(
+              _formatTime(item.intake.scheduledAt),
+              style: const TextStyle(
+                fontSize: 25,
+                fontWeight: FontWeight.w700,
+                color: _text,
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  item.medication.name,
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
+                    color: _text,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  _formatAmount(item.medication),
+                  style: const TextStyle(
+                    fontSize: 16,
+                    color: _secondaryText,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEmptyState() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: const Text(
+        'Você não possui doses pendentes para hoje.',
+        textAlign: TextAlign.center,
+        style: TextStyle(
+          fontSize: 17,
+          color: _secondaryText,
+        ),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colors = theme.colorScheme;
-    final items = _items ?? [];
-    final today = DateTime.now();
+    final nextItem = _items.isNotEmpty ? _items.first : null;
 
-    return RefreshIndicator(
-      onRefresh: _loadTodayIntakes,
-      child: ListView(
-        physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
-        children: [
-          Text(
-            'Hoje',
-            style: theme.textTheme.headlineLarge?.copyWith(
-              fontSize: 38,
-              fontWeight: FontWeight.w600,
-              color: const Color(0xFF102D3A),
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            _formatDate(today),
-            style: theme.textTheme.titleLarge?.copyWith(
-              fontSize: 22,
-              color: const Color(0xFF183744),
-            ),
-          ),
-          const SizedBox(height: 24),
-          if (_isLoading)
-            const Padding(
-              padding: EdgeInsets.all(40),
-              child: Center(
-                child: CircularProgressIndicator(),
-              ),
-            )
-          else if (items.isEmpty)
-            Container(
-              padding: const EdgeInsets.all(24),
-              decoration: BoxDecoration(
-                color: colors.surface,
-                borderRadius: BorderRadius.circular(28),
-              ),
-              child: Column(
-                children: [
-                  Icon(
-                    Icons.medication_outlined,
-                    size: 48,
-                    color: colors.primary,
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    'Nenhuma dose para hoje',
-                    textAlign: TextAlign.center,
-                    style: theme.textTheme.titleLarge?.copyWith(
-                      fontWeight: FontWeight.w600,
+    final upcomingItems = _items.length > 1
+        ? _items.sublist(1).take(4).toList()
+        : <_IntakeDisplayItem>[];
+
+    return Container(
+      color: _background,
+      child: SafeArea(
+        child: RefreshIndicator(
+          onRefresh: _loadTodayIntakes,
+          color: _primary,
+          child: ListView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: const EdgeInsets.fromLTRB(20, 18, 20, 24),
+            children: [
+              _buildHeader(),
+              const SizedBox(height: 30),
+
+              if (_isLoading)
+                const Padding(
+                  padding: EdgeInsets.all(40),
+                  child: Center(
+                    child: CircularProgressIndicator(
+                      color: _primary,
                     ),
                   ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Cadastre seus medicamentos para acompanhar '
-                    'os horários nesta tela.',
-                    textAlign: TextAlign.center,
-                    style: theme.textTheme.bodyLarge,
+                )
+              else if (nextItem == null)
+                _buildEmptyState()
+              else ...[
+                _buildNextMedication(nextItem),
+                const SizedBox(height: 28),
+                const Text(
+                  'Próximos horários',
+                  style: TextStyle(
+                    fontSize: 25,
+                    fontWeight: FontWeight.w600,
+                    color: _text,
                   ),
-                ],
-              ),
-            )
-          else
-            Container(
-              padding: const EdgeInsets.fromLTRB(18, 8, 18, 8),
-              decoration: BoxDecoration(
-                color: colors.surface,
-                borderRadius: BorderRadius.circular(30),
-              ),
-              child: Column(
-                children: List.generate(items.length, (index) {
-                  final item = items[index];
-                  final intake = item.intake;
-                  final medication = item.medication;
-                  final color = _medicationColors[
-                      index % _medicationColors.length];
-                  final isPending =
-                      intake.status == IntakeStatus.pending;
-
-                  return Column(
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 20),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.center,
-                          children: [
-                            Container(
-                              width: 72,
-                              height: 72,
-                              decoration: BoxDecoration(
-                                color: color.withValues(alpha: 0.13),
-                                shape: BoxShape.circle,
-                              ),
-                              child: Icon(
-                                Icons.medication,
-                                color: color,
-                                size: 38,
-                              ),
-                            ),
-                            const SizedBox(width: 16),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    _formatTime(intake.scheduledAt),
-                                    style: theme.textTheme.titleLarge?.copyWith(
-                                      fontSize: 25,
-                                      fontWeight: FontWeight.bold,
-                                      color: const Color(0xFF102D3A),
-                                    ),
-                                  ),
-                                  const SizedBox(height: 2),
-                                  Text(
-                                    '${medication.name} '
-                                    '${medication.dose.amount} '
-                                    '${medication.dose.unit.symbol}',
-                                    style: theme.textTheme.titleMedium?.copyWith(
-                                      fontSize: 19,
-                                      color: const Color(0xFF102D3A),
-                                    ),
-                                  ),
-                                  const SizedBox(height: 10),
-                                  Row(
-                                    children: [
-                                      Icon(
-                                        _statusIcon(intake),
-                                        color: _statusColor(intake),
-                                        size: 22,
-                                      ),
-                                      const SizedBox(width: 6),
-                                      Expanded(
-                                        child: Text(
-                                          _statusLabel(intake),
-                                          style: theme.textTheme.bodyLarge?.copyWith(
-                                            color: _statusColor(intake),
-                                            fontWeight: FontWeight.w500,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                  if (isPending) ...[
-                                    const SizedBox(height: 8),
-                                    Wrap(
-                                      spacing: 8,
-                                      children: [
-                                        TextButton.icon(
-                                          onPressed: () =>
-                                              _recordStatus(intake, true),
-                                          icon: const Icon(
-                                            Icons.check_circle_outline,
-                                            size: 18,
-                                          ),
-                                          label: const Text('Confirmar'),
-                                        ),
-                                        TextButton.icon(
-                                          onPressed: () =>
-                                              _recordStatus(intake, false),
-                                          icon: const Icon(
-                                            Icons.close,
-                                            size: 18,
-                                          ),
-                                          label: const Text('Não tomei'),
-                                        ),
-                                      ],
-                                    ),
-                                  ],
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      if (index < items.length - 1)
-                        const Divider(
-                          height: 1,
-                          thickness: 1,
-                          color: Color(0xFFDCE5E7),
-                        ),
-                    ],
-                  );
-                }),
-              ),
-            ),
-        ],
+                ),
+                const SizedBox(height: 16),
+                ...upcomingItems.map(_buildUpcomingItem),
+              ],
+            ],
+          ),
+        ),
       ),
     );
   }
