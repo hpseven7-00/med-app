@@ -3,6 +3,7 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../features/history/presentation/history_page.dart';
 import '../features/medications/presentation/medications_page.dart';
+import '../features/today/presentation/today_page.dart';
 
 class AppShell extends StatefulWidget {
   const AppShell({super.key});
@@ -14,11 +15,17 @@ class AppShell extends StatefulWidget {
 class _AppShellState extends State<AppShell> {
   int _selectedIndex = 0;
 
-  static const _pages = [
-    _DevelopmentPage(title: 'Início'),
-    MedicationsPage(),
-    HistoryPage(),
-    _DevelopmentPage(title: 'Perfil'),
+  final ValueNotifier<int> _refreshToday = ValueNotifier(0);
+
+  late final List<Widget> _pages = [
+    TodayPage(refreshSignal: _refreshToday),
+    MedicationsPage(
+      onMedicationAdded: () {
+        _refreshToday.value++;
+      },
+    ),
+    const HistoryPage(),
+    const _DevelopmentPage(title: 'Perfil'),
   ];
 
   static const _titles = [
@@ -29,11 +36,24 @@ class _AppShellState extends State<AppShell> {
   ];
 
   @override
+  void dispose() {
+    _refreshToday.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text(_titles[_selectedIndex]),
-      ),
+      appBar: _selectedIndex == 0
+          ? null
+          : AppBar(
+              title: Text(_titles[_selectedIndex]),
+              titleTextStyle: const TextStyle(
+                fontSize: 26,
+                fontWeight: FontWeight.w600,
+                color: Color(0xFF102D3A),
+              ),
+            ),
       body: SafeArea(
         child: IndexedStack(
           index: _selectedIndex,
